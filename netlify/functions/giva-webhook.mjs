@@ -53,11 +53,10 @@ export default async (req) => {
   const seenKey = `seen/${id}`;
   if (await store.get(seenKey)) return new Response("OK (duplicate)");
 
-  const staffIds = (process.env.STAFF_IDS || "")
-    .split(",")
-    .map((s) => s.trim())
-    .filter(Boolean);
-  const isStaff = actor != null && staffIds.includes(String(actor));
+  // STAFF_IDS accepts plain IDs or "id:Name" pairs, e.g. "832856:Jo,123456:Robert"
+  const staff = parseStaff(process.env.STAFF_IDS);
+  const staffIds = [...staff.keys()];
+  const isStaff = actor != null && staff.has(String(actor));
 
   // STAFF_MODE: "skip" (default) ignores staff activity; "thread" posts it in the thread
   if (isStaff && (process.env.STAFF_MODE || "skip") === "skip") {
@@ -82,19 +81,25 @@ export default async (req) => {
     }
 
     // Only label who acted once STAFF_IDS is filled in; otherwise everyone looks like a customer
-    const who = staffIds.length ? (isStaff ? "your team" : "the customer") : "";
+    const who = staffIds.length
+      ? isStaff
+        ? staff.get(String(actor)) || "your team"
+        : "the customer"
+      : "";
+    const when = formatTime(payload.occurredAt);
+    const stamp = when ? ` · ${when}` : "";
 
     if (!threadTs) {
       // First message for this ticket becomes the thread parent
       const text =
         event === "ticket.created"
-          ? `:new: *New ticket* ${label}`
-          : `:ticket: *Ticket* ${label}\n${describe(payload, who)}`;
+          ? `:new: *New ticket* ${label}${stamp}`
+          : `:ticket: *Ticket* ${label}${stamp}\n${describe(payload, who)}`;
       const res = await postToSlack({ text });
       await store.set(threadKey, res.ts);
     } else {
       await postToSlack({
-        text: describe(payload, who),
+        text: withStamp(describe(payload, who), stamp),
         thread_ts: threadTs,
         // Also show customer activity in the channel if BROADCAST_CUSTOMER=true
         reply_broadcast: !isStaff && process.env.BROADCAST_CUSTOMER === "true",
@@ -111,6 +116,45 @@ export default async (req) => {
 };
 
 export const config = { path: "/api/giva-webhook" };
+
+function parseStaff(raw) {
+  const map = new Map();
+  for (const entry of (raw || "").split(",")) {
+    const [id, ...nameParts] = entry.split(":");
+    const cleanId = id.trim();
+    if (!cleanId) continue;
+    map.set(cleanId, nameParts.join(":").trim());
+  }
+  return map;
+}
+
+// "2026-11-06T21:21:21Z" -> "11/6/2026 4:21 PM EST" in TIMEZONE (default America/New_York)
+function formatTime(iso) {
+  const date = iso ? new Date(iso) : null;
+  if (!date || Number.isNaN(date.getTime())) return "";
+  const timeZone = process.env.TIMEZONE || "America/New_York";
+  const parts = new Intl.DateTimeFormat("en-US", {
+    timeZone,
+    month: "numeric",
+    day: "numeric",
+    year: "numeric",
+    hour: "numeric",
+    minute: "2-digit",
+    hour12: true,
+    timeZoneName: "short",
+  }).formatToParts(date);
+  const get = (type) => parts.find((p) => p.type === type)?.value ?? "";
+  return `${get("month")}/${get("day")}/${get("year")} ${get("hour")}:${get("minute")} ${get(
+    "dayPeriod"
+  )} ${get("timeZoneName")}`.trim();
+}
+
+// Put the time on the first line so multi-change messages stay tidy
+function withStamp(text, stamp) {
+  if (!stamp) return text;
+  const [first, ...rest] = text.split("\n");
+  return [first + stamp, ...rest].join("\n");
+}
 
 // Friendly wording for the field names Giva lists in data.changes
 const CHANGE_LABELS = {
