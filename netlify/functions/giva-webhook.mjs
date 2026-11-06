@@ -132,11 +132,23 @@ function verifySignature({ id, timestamp, signature, body }) {
     console.warn("WARNING: signature check is OFF. Troubleshooting only.");
     return true;
   }
-  const secret = process.env.GIVA_SIGNING_SECRET;
-  if (!secret || !id || !timestamp || !signature) return false;
+  const secret = (process.env.GIVA_SIGNING_SECRET || "").trim();
+  if (!secret) {
+    console.warn("Signature check failed: GIVA_SIGNING_SECRET is not set (redeploy after adding it)");
+    return false;
+  }
+  if (!id || !timestamp || !signature) {
+    console.warn("Signature check failed: missing webhook headers", {
+      hasId: !!id, hasTimestamp: !!timestamp, hasSignature: !!signature,
+    });
+    return false;
+  }
 
   const age = Math.abs(Date.now() / 1000 - Number(timestamp));
-  if (!Number.isFinite(age) || age > TOLERANCE_SECONDS) return false;
+  if (!Number.isFinite(age) || age > TOLERANCE_SECONDS) {
+    console.warn("Signature check failed: timestamp outside 5-minute window", { timestamp, age });
+    return false;
+  }
 
   const signed = `${id}.${timestamp}.${body}`;
   const expected = candidateKeys(secret).map((key) =>
@@ -148,7 +160,16 @@ function verifySignature({ id, timestamp, signature, body }) {
     .filter(([version]) => version === "v1")
     .map(([, sig]) => sig);
 
-  return provided.some((sig) => expected.some((exp) => safeEqual(sig, exp)));
+  const ok = provided.some((sig) => expected.some((exp) => safeEqual(sig, exp)));
+  if (!ok) {
+    console.warn("Signature check failed: signature mismatch", {
+      signatureFormat: signature.slice(0, 3),
+      providedCount: provided.length,
+      secretHasWhsecPrefix: secret.startsWith("whsec_"),
+      secretLength: secret.length,
+    });
+  }
+  return ok;
 }
 
 // Accept the secret either as raw text or as base64 (with or without a "whsec_" prefix)
