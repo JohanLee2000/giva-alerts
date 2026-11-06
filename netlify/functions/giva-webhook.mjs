@@ -39,7 +39,12 @@ export default async (req) => {
   const ticket = payload.data?.ticket;
   console.log("Event", { event, actor, ticket: ticket?.key ?? ticket?.id ?? null });
 
-  // Test pings carry no ticket data
+  // Giva's Test button sends a signed ping marked test: true; acknowledge it without posting
+  if (payload.test === true) {
+    console.log("Test ping verified OK");
+    return new Response("OK (test ping)");
+  }
+
   if (!ticket?.id) return new Response("OK (no ticket data)");
 
   const store = getStore("giva-relay");
