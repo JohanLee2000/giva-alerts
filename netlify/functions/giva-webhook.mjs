@@ -6,6 +6,12 @@ import crypto from "node:crypto";
 const TOLERANCE_SECONDS = 5 * 60; // reject requests older than 5 minutes
 
 export default async (req) => {
+  console.log("Request received", {
+    method: req.method,
+    event: req.headers.get("webhook-giva-event"),
+    deliveryId: req.headers.get("webhook-giva-delivery-id"),
+  });
+
   if (req.method !== "POST") {
     return new Response("Method not allowed", { status: 405 });
   }
