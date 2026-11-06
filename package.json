@@ -1,0 +1,10 @@
+{
+  "name": "giva-slack-relay",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Relays Giva ticket webhooks to Slack threads",
+  "dependencies": {
+    "@netlify/blobs": "^8.1.0"
+  }
+}
