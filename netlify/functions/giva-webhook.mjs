@@ -67,9 +67,7 @@ export default async (req) => {
   try {
     // Keyed by channel too, so switching SLACK_CHANNEL_ID starts fresh threads there
     const threadKey = `thread/${process.env.SLACK_CHANNEL_ID}/${ticket.id}`;
-    // Fall back to the older key format (no channel) for threads started before that change
-    const threadTs =
-      (await store.get(threadKey)) || (await store.get(`thread/${ticket.id}`));
+    const threadTs = await store.get(threadKey);
     const name = ticket.key || ticket.id;
     const label = ticket.url ? `<${ticket.url}|${name}>` : name;
 
