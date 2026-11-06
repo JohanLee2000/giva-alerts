@@ -66,22 +66,33 @@ export default async (req) => {
   }
 
   try {
-    const threadKey = `thread/${ticket.id}`;
+    // Keyed by channel too, so switching SLACK_CHANNEL_ID starts fresh threads there
+    const threadKey = `thread/${process.env.SLACK_CHANNEL_ID}/${ticket.id}`;
     const threadTs = await store.get(threadKey);
     const name = ticket.key || ticket.id;
     const label = ticket.url ? `<${ticket.url}|${name}>` : name;
+
+    if (!threadTs && isStaff) {
+      // Staff activity never starts a new channel message; it only joins existing threads
+      await store.set(seenKey, "1");
+      console.log("Staff activity with no thread yet, skipped", { ticket: name });
+      return new Response("OK (staff activity, no thread)");
+    }
+
+    // Only label who acted once STAFF_IDS is filled in; otherwise everyone looks like a customer
+    const who = staffIds.length ? (isStaff ? "your team" : "the customer") : "";
 
     if (!threadTs) {
       // First message for this ticket becomes the thread parent
       const text =
         event === "ticket.created"
           ? `:new: *New ticket* ${label}`
-          : `:ticket: *Ticket* ${label}\n${describe(payload)}`;
+          : `:ticket: *Ticket* ${label}\n${describe(payload, who)}`;
       const res = await postToSlack({ text });
       await store.set(threadKey, res.ts);
     } else {
       await postToSlack({
-        text: describe(payload),
+        text: describe(payload, who),
         thread_ts: threadTs,
         // Also show customer activity in the channel if BROADCAST_CUSTOMER=true
         reply_broadcast: !isStaff && process.env.BROADCAST_CUSTOMER === "true",
@@ -99,22 +110,42 @@ export default async (req) => {
 
 export const config = { path: "/api/giva-webhook" };
 
-function describe({ event, data }) {
-  const changes =
-    Array.isArray(data?.changes) && data.changes.length ? data.changes.join(", ") : null;
+// Friendly wording for the field names Giva lists in data.changes
+const CHANGE_LABELS = {
+  status: "Status changed",
+  assignee: "Reassigned",
+  priority: "Priority changed",
+  link: "Linked to another ticket",
+  parent: "Parent ticket changed",
+  onhold: "On-hold changed",
+  on_hold: "On-hold changed",
+  tsunami: "Tsunami changed",
+};
+
+function humanize(field) {
+  if (CHANGE_LABELS[field]) return CHANGE_LABELS[field];
+  const words = String(field).replace(/[_-]+/g, " ").replace(/([a-z])([A-Z])/g, "$1 $2");
+  return `${words.charAt(0).toUpperCase()}${words.slice(1).toLowerCase()} changed`;
+}
+
+function describe({ event, data }, who) {
+  const by = who ? ` by ${who}` : "";
+  const changes = Array.isArray(data?.changes) ? data.changes : [];
   switch (event) {
     case "ticket.created":
-      return ":new: Ticket opened";
+      return `:new: Ticket opened${by}`;
     case "ticket.updated":
-      return `:pencil2: Updated${changes ? `: ${changes}` : ""}`;
+      return changes.length
+        ? changes.map((c) => `:pencil2: ${humanize(c)}${by}`).join("\n")
+        : `:pencil2: Ticket updated${by}`;
     case "ticket.note.added":
-      return ":speech_balloon: New note added";
+      return `:speech_balloon: New note${by}`;
     case "ticket.attachment.added":
-      return ":paperclip: Attachment added";
+      return `:paperclip: Attachment added${by}`;
     case "ticket.survey.completed":
-      return ":star: Satisfaction survey completed";
+      return ":star: Customer completed the satisfaction survey";
     default:
-      return `:bell: ${event}`;
+      return `:bell: ${event}${by}`;
   }
 }
 
